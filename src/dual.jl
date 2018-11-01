@@ -31,11 +31,20 @@ function (dobj::DualObjVal{T, TV, TPD})(λ) where {T, TV, TPD<:PrimalData{T}}
     @unpack pd, dte = dobj
     @unpack p, r, r0 = pd
     # Updates x to the Lagrangian minimizer for the input λ
+    #println("Updating x")
     dobj.x_updater(λ)
     nv, nc = size(p)
     φ = r0[] + dot(λ, r)
+    all(isfinite, λ) || (@show λ; error("Wait a minute, you screwed up. 0"))
+
+    isfinite(φ) || error("Wait a minute, you screwed up. 1")
+    #println("Adding objective terms")
     φ += mapreduce(dte, +, T(0), 1:nv)
+    isfinite(φ) || error("Wait a minute, you screwed up. 2")
+    #println("Adding constraint terms")
     φ += mapreduce((ji)->dte(λ, ji), +, T(0), Base.Iterators.product(1:nv, 1:nc))
+    #@show φ, λ
+    isfinite(φ) || error("Wait a minute, you screwed up. 3")
     return -φ
 end
 
@@ -67,6 +76,6 @@ function (dgrad::DualObjGrad{TPD})(∇φ::AbstractVector{T}, λ) where {T, TPD<:
     nv, nc = size(p)
     # Negate since we have a maximization problem
     map!((i)->(-r[i] - mapreduce(gte, +, T(0), Base.Iterators.product(1:nv, i:i))),
-        ∇φ, 1:nc)    
+        ∇φ, 1:nc)
     return ∇φ
 end

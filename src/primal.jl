@@ -22,6 +22,8 @@ struct XUpdater{TPD<:PrimalData}
 end
 function (xu::XUpdater)(λ)
     @unpack x = xu.pd
+    #@show sum(x)
+    #@show mean(xu.pd.p0), mean(xu.pd.q0)
     map!((j)->xu(λ, j), x, 1:length(x))
 end
 function (xu::XUpdater)(λ, j)
@@ -40,6 +42,7 @@ function (xu::XUpdater)(λ, j)
     βjLj = βj - Lj
     ljβj = lj1/Ujβj^2 - lj2/βjLj^2 
 
+    (lj1 < 0 || lj2 < 0) && @show lj1, lj2
     fpj = sqrt(lj1)
     fqj = sqrt(lj2)
     xj = (fpj * Lj + fqj * Uj) / (fpj + fqj)

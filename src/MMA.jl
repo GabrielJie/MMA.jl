@@ -6,7 +6,7 @@
 # JA  - Int. J. Numer. Meth. Engng.
 module MMA
 
-using Parameters, StructsOfArrays
+using Parameters, StructsOfArrays, Setfield, TimerOutputs
 
 import Optim
 import Optim: OnceDifferentiable, Fminbox, GradientDescent, update!, 
@@ -16,90 +16,71 @@ import Base: min, max, show
 
 export MMAModel, box!, ineq_constraint!, optimize
 
+struct MMA87 <: AbstractOptimizer end
+struct MMA02 <: AbstractOptimizer end
+abstract type TopOptAlgorithm end
+
 include("utils.jl")
 include("model.jl")
 include("primal.jl")
 include("dual.jl")
 include("lift.jl")
 include("trace.jl")
-
-struct MMA87 <: AbstractOptimizer end
-struct MMA02 <: AbstractOptimizer end
+include("workspace.jl")
 
 const μ = 0.1
 const ρmin = 1e-5
 
-default_dual_caps(::MMA87) = (0.9, 1.1)
-default_dual_caps(::MMA02) = (1., 100.)
+default_dual_caps(::MMA87, ::Type{T}) where T = (T(0.9), T(1.1))
+#default_dual_caps(::MMA87, ::Type{T}) where T = (T(0.0), T(Inf))
 
-function optimize(m::MMAModel{T,TV}, x0::TV, optimizer=MMA02(), suboptimizer=Optim.ConjugateGradient(); s_init=T(0.5), s_incr=T(1.2), s_decr=T(0.7), dual_caps=default_dual_caps(optimizer)) where {T, TV}
-    check_error(m, x0)
-    n_i = length(constraints(m))
-    n_j = dim(m)
-    x, x1, x2 = copy(x0), copy(x0), copy(x0)
-    TM = MatrixOf(TV)
+#default_dual_caps(::MMA02, ::Type{T}) where T = (T(1), T(100))
+default_dual_caps(::MMA02, ::Type{T}) where T = (T(1e6), T(1e6))
 
-    # Buffers for bounds and move limits
-    α, β, σ = zerosof(TV, n_j), zerosof(TV, n_j), zerosof(TV, n_j)
+function optimize(model::MMAModel{T,TV}, x0::TV, optimizer=MMA02(), suboptimizer=Optim.ConjugateGradient(); s_init=T(0.5), s_incr=T(1.2), s_decr=T(0.7), dual_caps=default_dual_caps(optimizer, T)) where {T, TV}
+    check_error(model, x0)
+    workspace = MMAWorkspace(model, x0, optimizer, suboptimizer; s_init=s_init, 
+        s_incr=s_incr, s_decr=s_decr, dual_caps=dual_caps)    
+    optimize!(workspace)
+end
 
-    # Buffers for p0, pji, q0, qji
-    p0, q0 = zerosof(TV, n_j), zerosof(TV, n_j)
-    p, q = zerosof(TM, n_j, n_i), zerosof(TM, n_j, n_i)
-    if optimizer isa MMA87
-        ρ = zerosof(TV, n_i)    
-    else
-        ρ = onesof(TV, n_i)
-    end
-    r = zerosof(TV, n_i)
-    
-    # Initial data and bounds for Optim to solve dual problem
-    λ = onesof(TV, n_i)
-    l = zerosof(TV, n_i)
-    u = infsof(TV, n_i)
+struct MMAResult{TO, TX, T}
+    optimizer::TO
+    initial_x::TX
+    minimizer::TX
+    minimum::T
+    iter::Int
+    iteration_converged::Bool
+    x_converged::Bool
+    x_tol::T
+    x_abschange::T
+    f_converged::Bool
+    f_tol::T
+    f_abschange::T
+    g_converged::Bool
+    g_tol::T
+    g_residual::T
+    f_increased::Bool
+    f_calls::Int
+    g_calls::Int
+    h_calls::Int
+end
 
-    # Objective gradient buffer
-    ∇f_x = nansof(TV, length(x))
-    g = zerosof(TV, n_i)
-    ng_approx = zerosof(TV, n_i)
-    ∇g = zerosof(TM, n_j, n_i)
-    
-    f_x::T = eval_objective(m, x, ∇f_x)
-    f_calls, g_calls = 1, 1
-    f_x_previous = T(NaN)
+function optimize!(#=to, =#workspace::MMAWorkspace{T, TV, TM}) where {T, TV, TM}
+    @unpack model, optimizer, suboptimizer, suboptions, x0, x, x1, x2, λ, l, u, ∇f_x, g, 
+        ng_approx, ∇g, f_x, f_calls, g_calls, f_x_previous, primal_data, tr, tracing, 
+        converged, x_converged, f_converged, gr_converged, f_increased, x_residual, 
+        f_residual, gr_residual, asymptotes_updater, variable_bounds_updater, 
+        cvx_grad_updater, lift_updater, lift_resetter, x_updater, dual_obj, 
+        dual_obj_grad, dual_caps, outer_iter, iter = workspace
 
-    # Evaluate the constraints and their gradients
-    map!((i)->eval_constraint(m, i, x, @view(∇g[:,i])), g, 1:n_i)
-
-    # Build a primal data struct storing all primal problem's info
-    primal_data = PrimalData(σ, α, β, p0, q0, p, q, ρ, r, Ref(zero(T)), x, x1, Ref(f_x), g, ∇f_x, ∇g)
-    
-    tr = OptimizationTrace{T, MMA87}()
-    tracing = (m.store_trace || m.extended_trace || m.show_trace)
-
-    converged = false
-    # Assess multiple types of convergence
-    x_converged, f_converged, gr_converged = false, false, false
-    f_increased = false
-    x_residual = T(Inf)
-    f_residual = T(Inf)
-    gr_residual = T(Inf)
-
-    asymptotes_updater = AsymptotesUpdater(m, σ, x, x1, x2, s_init, s_incr, s_decr)
-    variable_bounds_updater = VariableBoundsUpdater(primal_data, m, T(μ))
-    cvx_grad_updater = ConvexApproxGradUpdater(primal_data, m)
-    lift_updater = LiftUpdater(primal_data, ρ, g, ng_approx, n_j)
-    lift_resetter = LiftResetter(ρ, T(ρmin))
-
-    x_updater = XUpdater(primal_data)
-    dual_obj = DualObjVal(primal_data, λ, x_updater)
-    dual_obj_grad = DualObjGrad(primal_data, x_updater)
-
-    # Iteraton counter
-    k = 0
-    iter = 0
-    while !converged && iter < m.max_iters
-        k += 1
-        asymptotes_updater(Iteration(k))
+    TSubOptions = typeof(workspace.suboptions)
+    n_i = length(constraints(model))
+    n_j = dim(model)
+    maxiter = model.maxiter[]
+    while !converged && iter < maxiter
+        outer_iter += 1
+        asymptotes_updater(Iteration(outer_iter))
 
         # Track trial points two steps back
         copy!(x2, x1)
@@ -113,31 +94,33 @@ function optimize(m::MMAModel{T,TV}, x0::TV, optimizer=MMA02(), suboptimizer=Opt
         cvx_grad_updater()
 
         if optimizer isa MMA02
-            lift_resetter(Iteration(k))
+            lift_resetter(Iteration(outer_iter))
         end
         lift = true
-        while lift && iter < m.max_iters
+        _suboptions::TSubOptions = @set suboptions.outer_iterations = model.maxiter[]
+        _suboptions = @set suboptions.iterations = model.maxiter[]
+        while lift && iter < model.maxiter[]
             iter += 1
             # Solve dual
             λ .= min.(dual_caps[2], max.(λ, dual_caps[1]))
             d = OnceDifferentiable(dual_obj, dual_obj_grad, λ)
-            results = Optim.optimize(d, l, u, λ, Fminbox(suboptimizer), Optim.Options(x_tol=xtol(m), f_tol=ftol(m), g_tol=grtol(m), outer_iterations = m.max_iters, iterations = m.max_iters))
-            copy!(λ, results.minimizer)
+            _minimizer = #=@timeit to "Fminbox"=# Optim.optimize(d, l, u, λ, Optim.Fminbox(suboptimizer), _suboptions)
+            copy!(λ, _minimizer)
             dual_obj_grad(ng_approx, λ)
 
             # Evaluate the objective function and its gradient
-            f_x_previous, f_x = f_x, eval_objective(m, x, ∇f_x)
+            f_x_previous, f_x = f_x, eval_objective(model, x, ∇f_x)
             f_calls, g_calls = f_calls + 1, g_calls + 1
             # Correct for functions whose gradients go to infinity at some points, e.g. √x
             while mapreduce((x)->(isinf(x) || isnan(x)), or, false, ∇f_x)
                 map!((x1,x)->(T(0.01)*x1 + T(0.99)*x), x, x1, x)
-                f_x = eval_objective(m, x, ∇f_x)
+                f_x = eval_objective(model, x, ∇f_x)
                 f_calls, g_calls = f_calls + 1, g_calls + 1
             end
             primal_data.f_val[] = f_x
 
             # Evaluate the constraints and their Jacobian
-            map!((i)->eval_constraint(m, i, x, @view(∇g[:,i])), g, 1:n_i)
+            map!((i)->eval_constraint(model, i, x, @view(∇g[:,i])), g, 1:n_i)
 
             if optimizer isa MMA87
                 lift = false
@@ -150,33 +133,41 @@ function optimize(m::MMAModel{T,TV}, x0::TV, optimizer=MMA02(), suboptimizer=Opt
         x_converged, f_converged, gr_converged, 
         x_residual, f_residual, gr_residual, 
         f_increased, converged = assess_convergence(x, x1, f_x, f_x_previous, ∇f_x, 
-            xtol(m), ftol(m), grtol(m))
+            xtol(model), ftol(model), grtol(model))
 
-        converged = converged && all((x)->(x<=ftol(m)), g)
+        converged = converged && all((x)->(x<=ftol(model)), g)
         # Print some trace if flag is on
         @mmatrace()
     end
     h_calls = 0
-    return MultivariateOptimizationResults{typeof(optimizer), T, TV, typeof(x_residual), typeof(f_x), typeof(tr)}(optimizer,
-        x0,
-        x,
-        f_x,
-        iter,
-        iter == m.max_iters,
-        x_converged,
-        xtol(m),
-        x_residual,
-        f_converged,
-        ftol(m),
-        f_residual,
-        gr_converged,
-        grtol(m),
-        gr_residual,
-        f_increased,
-        tr,
-        f_calls,
-        g_calls,
-        h_calls)
+
+    @pack workspace = model, optimizer, suboptimizer, x0, x, x1, x2, λ, l, u, ∇f_x, g, 
+        ng_approx, ∇g, f_x, f_calls, g_calls, f_x_previous, primal_data, tr, tracing, 
+        converged, x_converged, f_converged, gr_converged, f_increased, x_residual, 
+        f_residual, gr_residual, asymptotes_updater, variable_bounds_updater, 
+        cvx_grad_updater, lift_updater, lift_resetter, x_updater, dual_obj, 
+        dual_obj_grad, dual_caps, outer_iter, iter
+
+    results = MMAResult(optimizer,
+            x0,
+            x,
+            f_x,
+            iter,
+            iter == model.maxiter[],
+            x_converged,
+            xtol(model),
+            x_residual,
+            f_converged,
+            ftol(model),
+            f_residual,
+            gr_converged,
+            grtol(model),
+            gr_residual,
+            f_increased,
+            f_calls,
+            g_calls,
+            h_calls)
+    return results
 end
 
 end # module

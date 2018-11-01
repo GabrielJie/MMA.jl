@@ -9,7 +9,7 @@ struct MMAModel{T, TV<:AbstractVector{T}, TC<:AbstractVector{<:Function}}
     show_trace::Bool
     extended_trace::Bool
     # Stopping criteria
-    max_iters::Int
+    maxiter::Base.RefValue{Int}
     ftol::Base.RefValue{T}
     xtol::Base.RefValue{T}
     grtol::Base.RefValue{T}
@@ -37,7 +37,7 @@ grtol!(m, v) = m.grtol[] = v
 MMAModel(args...; kwargs...) = MMAModel{Float64, Vector{Float64}, Vector{Function}}(args...; kwargs...)
 function MMAModel{T, TV, TC}(dim,
                   objective::Function;
-                  max_iters = 200,
+                  maxiter = 200,
                   xtol = eps(T),
                   ftol = sqrt(eps(T)),
                   grtol = sqrt(eps(T)),
@@ -49,7 +49,7 @@ function MMAModel{T, TV, TC}(dim,
     maxs = infsof(TV, dim)
     MMAModel{T, TV, TC}(dim, objective, Function[],
              mins, maxs, store_trace, show_trace, extended_trace,
-             max_iters, Ref(T(ftol)), Ref(T(xtol)), Ref(T(grtol)))
+             Ref(maxiter), Ref(T(ftol)), Ref(T(xtol)), Ref(T(grtol)))
 end
 
 # Box constraints
