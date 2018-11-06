@@ -2,4 +2,6 @@ Optim
 Compat
 julia 0.6
 Parameters
-StructsOfArrays
+StructArrays
+Setfield
+TimerOutputs

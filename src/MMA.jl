@@ -6,7 +6,9 @@
 # JA  - Int. J. Numer. Meth. Engng.
 module MMA
 
-using Parameters, StructsOfArrays, Setfield, TimerOutputs
+using Parameters, StructArrays, Setfield, TimerOutputs
+
+using LinearAlgebra
 
 import Optim
 import Optim: OnceDifferentiable, Fminbox, GradientDescent, update!, 
@@ -83,8 +85,8 @@ function optimize!(#=to, =#workspace::MMAWorkspace{T, TV, TM}) where {T, TV, TM}
         asymptotes_updater(Iteration(outer_iter))
 
         # Track trial points two steps back
-        copy!(x2, x1)
-        copy!(x1, x)
+        copyto!(x2, x1)
+        copyto!(x1, x)
 
         # Update convex approximation
         ## Update bounds on primal variables
@@ -104,15 +106,15 @@ function optimize!(#=to, =#workspace::MMAWorkspace{T, TV, TM}) where {T, TV, TM}
             # Solve dual
             λ .= min.(dual_caps[2], max.(λ, dual_caps[1]))
             d = OnceDifferentiable(dual_obj, dual_obj_grad, λ)
-            _minimizer = #=@timeit to "Fminbox"=# Optim.optimize(d, l, u, λ, Optim.Fminbox(suboptimizer), _suboptions)
-            copy!(λ, _minimizer)
+            _minimizer = #=@timeit to "Fminbox"=# Optim.optimize(d, l, u, λ, Optim.Fminbox(suboptimizer), _suboptions).minimizer
+            copyto!(λ, _minimizer)
             dual_obj_grad(ng_approx, λ)
 
             # Evaluate the objective function and its gradient
             f_x_previous, f_x = f_x, eval_objective(model, x, ∇f_x)
             f_calls, g_calls = f_calls + 1, g_calls + 1
             # Correct for functions whose gradients go to infinity at some points, e.g. √x
-            while mapreduce((x)->(isinf(x) || isnan(x)), or, false, ∇f_x)
+            while mapreduce((x)->(isinf(x) || isnan(x)), or, ∇f_x, init=false)
                 map!((x1,x)->(T(0.01)*x1 + T(0.99)*x), x, x1, x)
                 f_x = eval_objective(model, x, ∇f_x)
                 f_calls, g_calls = f_calls + 1, g_calls + 1
@@ -141,7 +143,7 @@ function optimize!(#=to, =#workspace::MMAWorkspace{T, TV, TM}) where {T, TV, TM}
     end
     h_calls = 0
 
-    @pack workspace = model, optimizer, suboptimizer, x0, x, x1, x2, λ, l, u, ∇f_x, g, 
+    @pack! workspace = model, optimizer, suboptimizer, x0, x, x1, x2, λ, l, u, ∇f_x, g, 
         ng_approx, ∇g, f_x, f_calls, g_calls, f_x_previous, primal_data, tr, tracing, 
         converged, x_converged, f_converged, gr_converged, f_increased, x_residual, 
         f_residual, gr_residual, asymptotes_updater, variable_bounds_updater, 

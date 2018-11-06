@@ -1,5 +1,5 @@
 using MMA
-using Base.Test
+using Test, LinearAlgebra
 
 import MMA: eval_constraint, eval_objective, dim
 

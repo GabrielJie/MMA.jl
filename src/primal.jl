@@ -56,14 +56,13 @@ struct ConvexApproxGradUpdater{T, TV, TPD<:PrimalData{T, TV}, TM<:MMAModel{T, TV
     pd::TPD
     m::TM
 end
-ConvexApproxGradUpdater(pd::TPD, m::TM) where {T, TV, TPD<:PrimalData{T, TV}, TM<:MMAModel{T, TV}} = ConvexApproxGradUpdater{T, TV, TPD, TM}(pd, m)
 
 function (gu::ConvexApproxGradUpdater{T})() where T
     @unpack pd, m = gu
     @unpack f_val, g_val, r = pd
     n = dim(m)
-    r0 = f_val[] - mapreduce(gu, +, T(0), 1:n)
-    map!((i)->(g_val[i] - mapreduce(gu, +, T(0), Base.Iterators.product(1:n, i:i))), 
+    r0 = f_val[] - mapreduce(gu, +, 1:n, init=T(0))
+    map!((i)->(g_val[i] - mapreduce(gu, +, Base.Iterators.product(1:n, i:i), init=T(0))), 
         r, 1:length(constraints(m)))
     pd.r0[] = r0
 end
@@ -99,14 +98,16 @@ struct VariableBoundsUpdater{T, TV, TPD<:PrimalData{T, TV}, TModel<:MMAModel{T, 
     m::TModel
     μ::T
 end
-VariableBoundsUpdater(pd::TPD, m::TModel, μ::T) where {T, TV, TPD<:PrimalData{T, TV}, TModel<:MMAModel{T, TV}} = VariableBoundsUpdater{T, TV, TPD, TModel}(pd, m, μ)
 
 function (bu::VariableBoundsUpdater{T, TV})() where {T, TV}
     @unpack pd, m = bu
     @unpack α, β = pd
     n = dim(m)
-    s = StructOfArrays{NTuple{2,T}, 1, Tuple{TV,TV}}((α, β))
-    map!(bu, s, 1:n)
+    s = StructArray{NTuple{2,T}}(α, β)
+    map!(s, 1:n) do i
+        t = bu(i)
+        (x1 = t[1], x2 = t[2])
+    end
 end
 function (bu::VariableBoundsUpdater{T})(j) where T
     @unpack m, pd, μ = bu

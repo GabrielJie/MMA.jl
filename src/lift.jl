@@ -5,15 +5,13 @@ struct LiftUpdater{T, TV<:AbstractVector{T}, TPD}
     ng_approx::TV
     n_j::Int
 end
-function LiftUpdater(pd::TPD, ρ::TV, g::TV, ng_approx::TV, n_j::Int) where {T, TV<:AbstractVector{T}, TPD}
-    LiftUpdater{T,TV,TPD}(pd, ρ, g, ng_approx, n_j)
-end
+
 function (lu::LiftUpdater{T})() where T
     @unpack ρ, pd = lu
     @unpack x, x1, σ  = pd
     n_i = length(ρ)
-    w = mapreduce((x_x1_σ)->((x_x1_σ[1] - x_x1_σ[2])^2 / (x_x1_σ[3]^2 - (x_x1_σ[1] - x_x1_σ[2])^2)), +, zero(T), zip(x, x1, σ)) / 2
-    return mapreduce(i->lu(w, i), or, false, 1:n_i)
+    w = mapreduce((x_x1_σ)->((x_x1_σ[1] - x_x1_σ[2])^2 / (x_x1_σ[3]^2 - (x_x1_σ[1] - x_x1_σ[2])^2)), +, zip(x, x1, σ), init=T(0)) / 2
+    return mapreduce(i->lu(w, i), or, 1:n_i, init=false)
 end
 function (lu::LiftUpdater{T})(w, i::Int) where T
     @unpack ρ, g, ng_approx, n_j, pd = lu
