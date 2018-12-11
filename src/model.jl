@@ -34,7 +34,10 @@ ftol!(m, v) = m.ftol[] = v
 xtol!(m, v) = m.xtol[] = v
 grtol!(m, v) = m.grtol[] = v
 
-MMAModel(args...; kwargs...) = MMAModel{Float64, Vector{Float64}, Vector{Function}}(args...; kwargs...)
+MMAModel(dim, objective, args...; kwargs...) = MMAModel(whichdevice(objective), dim, objective, args...; kwargs...) 
+MMAModel(::CPU, args...; kwargs...) = MMAModel{Float64, Vector{Float64}, Vector{Function}}(args...; kwargs...)
+MMAModel(::GPU, args...; kwargs...) = MMAModel{Float64, CuVector{Float64}, Vector{Function}}(args...; kwargs...)
+
 function MMAModel{T, TV, TC}(dim,
                   objective::Function;
                   maxiter = 200,
@@ -63,11 +66,11 @@ end
 
 function box!(m::MMAModel, minb::T, maxb::T) where {T}
     nv = dim(m)
-    map!((i)->minb, m.box_min, 1:nv)
-    map!((i)->maxb, m.box_max, 1:nv)
+    m.box_min[1:nv] .= minb
+    m.box_max[1:nv] .= maxb
 end
 
-function box!(m::MMAModel, minbs::Vector{T}, maxbs::Vector{T}) where {T}
+function box!(m::MMAModel, minbs::AbstractVector{T}, maxbs::AbstractVector{T}) where {T}
     if (length(minbs) != dim(m)) || (length(minbs) != dim(m))
         throw(ArgumentError("box constraint vector must have same size as problem dimension"))
     end

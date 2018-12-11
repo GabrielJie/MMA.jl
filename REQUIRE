@@ -5,3 +5,5 @@ Parameters
 StructArrays
 Setfield
 TimerOutputs
+GPUUtils
+CuArrays

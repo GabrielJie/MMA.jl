@@ -1,7 +1,6 @@
-struct DualTermEvaluator{T, TV, TPD<:PrimalData{T,TV}}
+struct DualTermEvaluator{T, TPD<:PrimalData{T}}
     pd::TPD
 end
-DualTermEvaluator(pd::TPD, λ::TV) where {T, TV, TPD<:PrimalData{T,TV}} = DualTermEvaluator{T, TV, TPD}(pd, λ)
 function (dte::DualTermEvaluator)(λ, ji::Tuple)
     j, i = ji
     @unpack pd = dte
@@ -21,13 +20,13 @@ function (dte::DualTermEvaluator)(j::Int)
     Lj, Uj = minus_plus(x1[j], σj)
     return p0[j]/(Uj-x[j]) + q0[j]/(x[j]-Lj)
 end
-struct DualObjVal{T, TV, TPD<:PrimalData}
+struct DualObjVal{T, TPD<:PrimalData}
     pd::TPD
-    dte::DualTermEvaluator{T, TV, TPD}
+    dte::DualTermEvaluator{T, TPD}
     x_updater::XUpdater{TPD}
 end
-DualObjVal(pd::TPD, λ::TV, x_updater::XUpdater{TPD}) where {T, TV, TPD<:PrimalData{T, TV}} = DualObjVal(pd, DualTermEvaluator{T, TV, TPD}(pd), x_updater)
-function (dobj::DualObjVal{T, TV, TPD})(λ) where {T, TV, TPD<:PrimalData{T}}
+DualObjVal(pd::TPD, x_updater::XUpdater{TPD}) where {TPD <: PrimalData} = DualObjVal(pd, DualTermEvaluator(pd), x_updater)
+function (dobj::DualObjVal{T, TPD})(λ) where {T, TPD<:PrimalData{T}}
     @unpack pd, dte = dobj
     @unpack p, r, r0 = pd
     # Updates x to the Lagrangian minimizer for the input λ

@@ -1,25 +1,25 @@
-mutable struct MMAWorkspace{T, TV, TM, TO, TSO, TSubOptions, TModel<:MMAModel{T, TV}, TPD<:PrimalData{T, TV, TM}}
+mutable struct MMAWorkspace{T, TV1, TV2, TM, TO, TSO, TSubOptions, TTrace<:OptimizationTrace{T}, TModel<:MMAModel{T}, TPD<:PrimalData{T}}
     model::TModel
     optimizer::TO
     suboptimizer::TSO
     suboptions::TSubOptions
-    x0::TV
-    x::TV
-	x1::TV
-	x2::TV
-	λ::TV
-	l::TV
-	u::TV
-	∇f_x::TV
-	g::TV
-	ng_approx::TV
+    x0::TV1
+    x::TV1
+	x1::TV1
+	x2::TV1
+	λ::TV2
+	l::TV2
+	u::TV2
+	∇f_x::TV1
+	g::TV2
+	ng_approx::TV2
 	∇g::TM
 	f_x::T
 	f_calls::Int
 	g_calls::Int
 	f_x_previous::T
 	primal_data::TPD
-	tr::OptimizationTrace{T,TO}
+	tr::TTrace
 	tracing::Bool
 	converged::Bool
 	x_converged::Bool
@@ -29,20 +29,20 @@ mutable struct MMAWorkspace{T, TV, TM, TO, TSO, TSubOptions, TModel<:MMAModel{T,
 	x_residual::T
 	f_residual::T
 	gr_residual::T
-	asymptotes_updater::AsymptotesUpdater{T, TV, TModel}
-	variable_bounds_updater::VariableBoundsUpdater{T, TV, TPD, TModel}
-	cvx_grad_updater::ConvexApproxGradUpdater{T, TV, TPD, TModel}
-	lift_updater::LiftUpdater{T, TV, TPD}
-	lift_resetter::LiftResetter{T, TV}
+	asymptotes_updater::AsymptotesUpdater{T, TV1, TModel}
+	variable_bounds_updater::VariableBoundsUpdater{T, TPD, TModel}
+	cvx_grad_updater::ConvexApproxGradUpdater{T, TPD, TModel}
+	lift_updater::LiftUpdater{T, TV2, TPD}
+	lift_resetter::LiftResetter{T, TV2}
 	x_updater::XUpdater{TPD}
-	dual_obj::DualObjVal{T, TV, TPD}
+	dual_obj::DualObjVal{T, TPD}
 	dual_obj_grad::DualObjGrad{TPD}
-    dual_caps::Tuple{T,T}
+    dual_caps::Tuple{T, T}
 	outer_iter::Int
     iter::Int
 end
-const MMA87Workspace{T, TV, TM, TSO, TModel, TPD} = MMAWorkspace{T, TV, TM, MMA87, TSO, TModel, TPD}
-const MMA02Workspace{T, TV, TM, TSO, TModel, TPD} = MMAWorkspace{T, TV, TM, MMA02, TSO, TModel, TPD}
+const MMA87Workspace{T, TV1, TV2, TM, TSO, TModel, TPD} = MMAWorkspace{T, TV1, TV2, TM, MMA87, TSO, TModel, TPD}
+const MMA02Workspace{T, TV1, TV2, TM, TSO, TModel, TPD} = MMAWorkspace{T, TV1, TV2, TM, MMA02, TSO, TModel, TPD}
 
 Base.show(io::IO, w::MMA87Workspace) = print(io, "Workspace for the method of moving asymptotes of 1987.")
 Base.show(io::IO, w::MMA02Workspace) = print(io, "Workspace for the method of moving asymptotes of 2002.")
@@ -61,22 +61,22 @@ function MMAWorkspace(model::MMAModel{T,TV}, x0::TV, optimizer=MMA02(), suboptim
     p0, q0 = zerosof(TV, n_j), zerosof(TV, n_j)
     p, q = zerosof(TM, n_j, n_i), zerosof(TM, n_j, n_i)
     if optimizer isa MMA87
-        ρ = zerosof(TV, n_i)    
+        ρ = Vector(zerosof(TV, n_i))
     else
-        ρ = onesof(TV, n_i)
+        ρ = Vector(onesof(TV, n_i))
     end
-    r = zerosof(TV, n_i)
+    r = Vector(zerosof(TV, n_i))
     
     # Initial data and bounds for Optim to solve dual problem
-    λ = onesof(TV, n_i)
-    l = zerosof(TV, n_i)
-    u = infsof(TV, n_i)
+    λ = Vector(onesof(TV, n_i))
+    l = Vector(zerosof(TV, n_i))
+    u = Vector(infsof(TV, n_i))
     #u .= 1e50
     # Objective gradient buffer
 
     ∇f_x = nansof(TV, length(x))
-    g = zerosof(TV, n_i)
-    ng_approx = zerosof(TV, n_i)
+    g = Vector(zerosof(TV, n_i))
+    ng_approx = Vector(zerosof(TV, n_i))
     ∇g = zerosof(TM, n_j, n_i)
     
     f_x::T = eval_objective(model, x, ∇f_x)
@@ -84,7 +84,7 @@ function MMAWorkspace(model::MMAModel{T,TV}, x0::TV, optimizer=MMA02(), suboptim
     f_x_previous = T(NaN)
 
     # Evaluate the constraints and their gradients
-    map!((i)->eval_constraint(model, i, x, @view(∇g[:,i])), g, 1:n_i)
+    update_constraints!(g, ∇g, model, x)
 
     # Build a primal data struct storing all primal problem's info
     primal_data = PrimalData(σ, α, β, p0, q0, p, q, ρ, r, Ref(zero(T)), x, x1, Ref(f_x), g, ∇f_x, ∇g)
@@ -107,7 +107,7 @@ function MMAWorkspace(model::MMAModel{T,TV}, x0::TV, optimizer=MMA02(), suboptim
     lift_resetter = LiftResetter(ρ, T(ρmin))
 
     x_updater = XUpdater(primal_data)
-    dual_obj = DualObjVal(primal_data, λ, x_updater)
+    dual_obj = DualObjVal(primal_data, x_updater)
     dual_obj_grad = DualObjGrad(primal_data, x_updater)
 
     # Iteraton counter
@@ -119,13 +119,20 @@ function MMAWorkspace(model::MMAModel{T,TV}, x0::TV, optimizer=MMA02(), suboptim
     TModel = typeof(model)
     TPD = typeof(primal_data)
     TSubOptions = typeof(suboptions)
-    return MMAWorkspace{T, TV, TM, TO, TSO, TSubOptions, TModel, TPD}(
+    return MMAWorkspace(
         model, optimizer, suboptimizer, suboptions, x0, x, x1, x2, λ, l, u, ∇f_x, g, 
         ng_approx, ∇g, f_x, f_calls, g_calls, f_x_previous, primal_data, tr, tracing, 
         converged, x_converged, f_converged, gr_converged, f_increased, x_residual, 
         f_residual, gr_residual, asymptotes_updater, variable_bounds_updater, 
         cvx_grad_updater, lift_updater, lift_resetter, x_updater, dual_obj, 
         dual_obj_grad, dual_caps, outer_iter, iter)
+end
+
+function update_constraints!(g, ∇g, model, x)
+    for i in 1:length(g)
+        g[i] = eval_constraint(model, i, x, @view(∇g[:,i]))
+    end
+    return g
 end
 
 function assess_convergence(workspace::MMAWorkspace)

@@ -1,19 +1,19 @@
-struct PrimalData{T, TV<:AbstractVector{T}, TM<:AbstractMatrix{T}}
-    σ::TV
-    α::TV # Lower move limit
-    β::TV # Upper move limit
-    p0::TV
-    q0::TV
+struct PrimalData{T, TV1<:AbstractVector{T}, TV2, TM<:AbstractMatrix{T}}
+    σ::TV1
+    α::TV1 # Lower move limit
+    β::TV1 # Upper move limit
+    p0::TV1
+    q0::TV1
     p::TM
     q::TM
-    ρ::TV
-    r::TV
+    ρ::TV2
+    r::TV2
     r0::Base.RefValue{T}
-    x::TV # Optimal value for x in dual iteration
-    x1::TV # Optimal value for x in previous outer iteration
+    x::TV1 # Optimal value for x in dual iteration
+    x1::TV1 # Optimal value for x in previous outer iteration
     f_val::Base.RefValue{T} # Function value at current iteration
-    g_val::TV # Inequality values at current iteration
-    ∇f::TV # Function gradient at current iteration
+    g_val::TV2 # Inequality values at current iteration
+    ∇f::TV1 # Function gradient at current iteration
     ∇g::TM # Inequality gradients [var, ineq] at current iteration
 end
 
@@ -52,7 +52,7 @@ function (xu::XUpdater)(λ, j)
 end
 
 # Primal problem functions
-struct ConvexApproxGradUpdater{T, TV, TPD<:PrimalData{T, TV}, TM<:MMAModel{T, TV}}
+struct ConvexApproxGradUpdater{T, TPD<:PrimalData{T}, TM<:MMAModel{T}}
     pd::TPD
     m::TM
 end
@@ -93,13 +93,13 @@ function (gu::ConvexApproxGradUpdater{T})(ji::Tuple) where T
     return (pji + qji + 2Δ)/σj
 end
 
-struct VariableBoundsUpdater{T, TV, TPD<:PrimalData{T, TV}, TModel<:MMAModel{T, TV}}
+struct VariableBoundsUpdater{T, TPD<:PrimalData{T}, TModel<:MMAModel{T}}
     pd::TPD
     m::TModel
     μ::T
 end
 
-function (bu::VariableBoundsUpdater{T, TV})() where {T, TV}
+function (bu::VariableBoundsUpdater{T})() where {T}
     @unpack pd, m = bu
     @unpack α, β = pd
     n = dim(m)
@@ -119,7 +119,7 @@ function (bu::VariableBoundsUpdater{T})(j) where T
     return (αj, βj)
 end
 
-struct AsymptotesUpdater{T, TV<:AbstractVector{T}, TModel<:MMAModel{T,TV}}
+struct AsymptotesUpdater{T, TV<:AbstractVector{T}, TModel<:MMAModel{T}}
     m::TModel
     σ::TV
     x::TV
@@ -130,14 +130,11 @@ struct AsymptotesUpdater{T, TV<:AbstractVector{T}, TModel<:MMAModel{T,TV}}
     s_decr::T
 end
 
-struct InitialAsymptotesUpdater{T, TV, TModel<:MMAModel{T,TV}}
+struct InitialAsymptotesUpdater{T, TModel<:MMAModel{T}}
     m::TModel
     s_init::T
 end
 Initial(au::AsymptotesUpdater) = InitialAsymptotesUpdater(au.m, au.s_init)
-function InitialAsymptotesUpdater(m::TModel, s_init::T) where {T, TV<:AbstractVector{T}, TModel<:MMAModel{T, TV}}
-    InitialAsymptotesUpdater{T, TV, TModel}(m, s_init)
-end
 
 function (au::AsymptotesUpdater{T, TV})(k::Iteration) where {T, TV}
     @unpack σ, m = au
